@@ -1,0 +1,53 @@
+# Python compiled files
+*.pyc
+__pycache__/
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Environment files
+.env
+.venv/
+env/
+
+# Build output directories
+build/
+dist/
+
+# Slicer related temporary files
+*.mrml
+*.mrb
+*.nrrd~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+coverage.xml
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+
+# VSCode CMake Tools
+.vscode/cmake-kits.json
+.vscode/settings.json
+
+# Qt Designer generated files
+*.ui~
