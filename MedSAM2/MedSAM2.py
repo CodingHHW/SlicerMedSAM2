@@ -889,14 +889,16 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def upload_image_to_server(self):
         """
-        Uploads the current image to the server.
+        Uploads the current 2D slice image to the server with window/level applied.
         """
         url = f"{self.server}/upload_image"
-        image_data = self.get_image_data()
+        
+        # Get current slice image data with window/level applied
+        image_data = self.get_current_slice_data_with_window_level()
         if image_data is None:
             return None
 
-        # Convert image data to bytes
+        # Convert image data to bytes (2D numpy array)
         buffer = io.BytesIO()
         np.save(buffer, image_data)
         compressed_data = gzip.compress(buffer.getvalue())
@@ -904,7 +906,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Send to server
         from requests_toolbelt import MultipartEncoder
         fields = {
-            "file": ("volume.npy.gz", compressed_data, "application/octet-stream"),
+            "file": ("slice.npy.gz", compressed_data, "application/octet-stream"),
         }
         encoder = MultipartEncoder(fields=fields)
         response = self.request_to_server(
@@ -915,15 +917,116 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         if response is not None:
             self.previous_states["image_data"] = image_data
-            debug_print("Image uploaded successfully!")
+            debug_print("2D slice image uploaded successfully!")
         return response
+        
+    def get_current_slice_data_with_window_level(self):
+        """
+        Gets the current slice image data with window/level applied.
+        Returns a 2D numpy array.
+        """
+        # Get current active slice view
+        sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
+        if not sliceWidget:
+            debug_print("No active slice widget found")
+            return None
+        
+        sliceLogic = sliceWidget.sliceLogic()
+        sliceNode = sliceLogic.GetSliceNode()
+        
+        # Get current slice index
+        volumeNode = self.get_volume_node()
+        if not volumeNode:
+            debug_print("No volume node found")
+            return None
+        
+        # Get slice offset
+        sliceOffset = sliceNode.GetSliceOffset()
+        
+        # Get volume image data
+        imageData = volumeNode.GetImageData()
+        if not imageData:
+            debug_print("No image data found in volume node")
+            return None
+        
+        # Get volume dimensions and spacing
+        extent = imageData.GetExtent()
+        spacing = imageData.GetSpacing()
+        origin = imageData.GetOrigin()
+        
+        # Calculate slice index from offset
+        sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
+        
+        # Get 3D volume array
+        volumeArray = slicer.util.arrayFromVolume(volumeNode)
+        
+        # Extract 2D slice (assuming volumeArray is in format [Z, Y, X])
+        if sliceIndex < 0 or sliceIndex >= volumeArray.shape[0]:
+            debug_print(f"Invalid slice index: {sliceIndex}")
+            return None
+        
+        sliceArray = volumeArray[sliceIndex, :, :]
+        
+        # Get current window/level settings
+        windowWidth = sliceNode.GetWindowWidth()
+        windowCenter = sliceNode.GetWindowCenter()
+        
+        # Apply window/level to slice
+        sliceWithWindowLevel = self.apply_window_level(sliceArray, windowCenter, windowWidth)
+        
+        # Convert to MedSAM2 expected format (0-255 range, 3-channel if needed)
+        sliceWithWindowLevel = self.convert_to_medsam2_format(sliceWithWindowLevel)
+        
+        return sliceWithWindowLevel
+        
+    def apply_window_level(self, imageArray, windowCenter, windowWidth):
+        """
+        Applies window/level to the image array.
+        
+        Args:
+            imageArray: 2D numpy array of image data
+            windowCenter: Window center value
+            windowWidth: Window width value
+            
+        Returns:
+            2D numpy array with window/level applied
+        """
+        # Calculate window min and max
+        windowMin = windowCenter - windowWidth / 2
+        windowMax = windowCenter + windowWidth / 2
+        
+        # Apply window/level
+        result = np.clip(imageArray, windowMin, windowMax)
+        result = (result - windowMin) / (windowMax - windowMin)  # Normalize to 0-1
+        
+        return result
+        
+    def convert_to_medsam2_format(self, imageArray):
+        """
+        Converts the image array to MedSAM2 expected format.
+        
+        Args:
+            imageArray: 2D numpy array with values in 0-1 range
+            
+        Returns:
+            2D numpy array in MedSAM2 format
+        """
+        # MedSAM2 expects 0-255 range, uint8
+        imageArray = (imageArray * 255).astype(np.uint8)
+        
+        # If MedSAM2 expects 3-channel input, uncomment the following line
+        # imageArray = np.stack((imageArray, imageArray, imageArray), axis=-1)
+        
+        return imageArray
 
     def upload_segment_to_server(self):
         """
-        Uploads the current segment to the server.
+        Uploads the current 2D slice segmentation to the server.
         """
         url = f"{self.server}/upload_segment"
-        segment_data = self.get_segment_data()
+        
+        # Get current 2D slice segmentation data
+        segment_data = self.get_current_slice_segment_data()
         if segment_data is None:
             return None
 
@@ -946,8 +1049,61 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         if response is not None:
             self.previous_states["segment_data"] = segment_data
-            debug_print("Segment uploaded successfully!")
+            debug_print("2D segment uploaded successfully!")
         return response
+        
+    def get_current_slice_segment_data(self):
+        """
+        Gets the current slice segmentation data.
+        Returns a 2D numpy array.
+        """
+        # Get current slice index
+        sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
+        if not sliceWidget:
+            debug_print("No active slice widget found")
+            return None
+        
+        sliceLogic = sliceWidget.sliceLogic()
+        sliceNode = sliceLogic.GetSliceNode()
+        
+        volumeNode = self.get_volume_node()
+        if not volumeNode:
+            debug_print("No volume node found")
+            return None
+        
+        # Get slice offset
+        sliceOffset = sliceNode.GetSliceOffset()
+        
+        # Get volume image data
+        imageData = volumeNode.GetImageData()
+        if not imageData:
+            debug_print("No image data found in volume node")
+            return None
+        
+        # Calculate slice index from offset
+        spacing = imageData.GetSpacing()
+        origin = imageData.GetOrigin()
+        sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
+        
+        # Get segmentation data
+        segmentation_node, selected_segment_id = self.get_selected_segmentation_node_and_segment_id()
+        if not segmentation_node or not selected_segment_id:
+            debug_print("No segmentation node or segment ID found")
+            return None
+        
+        # Get 3D segment data
+        segment_3d = slicer.util.arrayFromSegmentBinaryLabelmap(
+            segmentation_node, selected_segment_id, volumeNode
+        )
+        
+        # Extract 2D slice (assuming segment_3d is in format [Z, Y, X])
+        if sliceIndex < 0 or sliceIndex >= segment_3d.shape[0]:
+            debug_print(f"Invalid slice index: {sliceIndex}")
+            return None
+        
+        segment_2d = segment_3d[sliceIndex, :, :]
+        
+        return segment_2d
 
     def unpack_binary_segmentation(self, content, decompress=True):
         """
