@@ -684,28 +684,86 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def show_segmentation(self, segmentation_mask):
         """
         Updates the currently selected segment with the given binary mask array.
+        Handles both 2D slice segmentation and 3D volume segmentation.
         """
         t0 = time.time()
-        self.previous_states["segment_data"] = segmentation_mask
-
+        
+        # Get segmentation node and segment ID
         segmentationNode, selectedSegmentID = (
             self.get_selected_segmentation_node_and_segment_id()
         )
-
-        was_3d_shown = segmentationNode.GetSegmentation().ContainsRepresentation(slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName())
-
-        with slicer.util.RenderBlocker():  # avoid flashing of 3D view
-            self.ui.editor_widget.saveStateForUndo()
-            slicer.util.updateSegmentBinaryLabelmapFromArray(
-                segmentation_mask,
-                segmentationNode,
-                selectedSegmentID,
-                self.get_volume_node(),
+        volumeNode = self.get_volume_node()
+        if not volumeNode:
+            debug_print("No volume node found")
+            return
+        
+        # Check if segmentation_mask is 2D (from server) or 3D (from other sources)
+        if segmentation_mask.ndim == 2:
+            # Handle 2D segmentation result (from server)
+            
+            # Get current slice index
+            sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
+            if not sliceWidget:
+                debug_print("No active slice widget found")
+                return
+            
+            sliceLogic = sliceWidget.sliceLogic()
+            sliceNode = sliceLogic.GetSliceNode()
+            
+            # Get slice offset
+            sliceOffset = sliceNode.GetSliceOffset()
+            
+            # Get volume image data
+            imageData = volumeNode.GetImageData()
+            if not imageData:
+                debug_print("No image data found in volume node")
+                return
+            
+            # Calculate slice index from offset
+            spacing = imageData.GetSpacing()
+            origin = imageData.GetOrigin()
+            sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
+            
+            # Get current 3D segmentation data
+            currentSegmentation = slicer.util.arrayFromSegmentBinaryLabelmap(
+                segmentationNode, selectedSegmentID, volumeNode
             )
-            if was_3d_shown:
-                segmentationNode.CreateClosedSurfaceRepresentation()
+            
+            # Update the specific slice with the 2D segmentation result
+            if sliceIndex >= 0 and sliceIndex < currentSegmentation.shape[0]:
+                currentSegmentation[sliceIndex, :, :] = segmentation_mask
+                
+                # Save updated segmentation to previous_states
+                self.previous_states["segment_data"] = currentSegmentation
+                
+                # Update the segment with the full 3D segmentation data
+                with slicer.util.RenderBlocker():  # avoid flashing of 3D view
+                    self.ui.editor_widget.saveStateForUndo()
+                    slicer.util.updateSegmentBinaryLabelmapFromArray(
+                        currentSegmentation,
+                        segmentationNode,
+                        selectedSegmentID,
+                        volumeNode,
+                    )
+        else:
+            # Handle 3D segmentation result (original behavior)
+            self.previous_states["segment_data"] = segmentation_mask
+            
+            with slicer.util.RenderBlocker():
+                self.ui.editor_widget.saveStateForUndo()
+                slicer.util.updateSegmentBinaryLabelmapFromArray(
+                    segmentation_mask,
+                    segmentationNode,
+                    selectedSegmentID,
+                    volumeNode,
+                )
+        
+        # Handle 3D representation if needed
+        was_3d_shown = segmentationNode.GetSegmentation().ContainsRepresentation(slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName())
+        if was_3d_shown:
+            segmentationNode.CreateClosedSurfaceRepresentation()
 
-        # Mark the segment as being edited (can be useful for selective saving of only modified segments)
+        # Mark the segment as being edited
         segment = segmentationNode.GetSegmentation().GetSegment(selectedSegmentID)
         if slicer.vtkSlicerSegmentationsModuleLogic.GetSegmentStatus(segment) == slicer.vtkSlicerSegmentationsModuleLogic.NotStarted:
             slicer.vtkSlicerSegmentationsModuleLogic.SetSegmentStatus(segment, slicer.vtkSlicerSegmentationsModuleLogic.InProgress)
