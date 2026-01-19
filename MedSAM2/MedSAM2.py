@@ -187,8 +187,8 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         self.ui.uploadProgressGroup.setVisible(False)
 
-        # Load the saved server URL (default to an empty string if not set)
-        savedServer = slicer.util.settingsValue("MedSAM2/server", "")
+        # Load the saved server URL (default to http://172.25.52.123:8002/ if not set)
+        savedServer = slicer.util.settingsValue("MedSAM2/server", "http://172.25.52.123:8002")
         self.ui.Server.text = savedServer
         self.server = savedServer.rstrip("/")
 
