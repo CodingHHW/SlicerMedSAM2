@@ -1,33 +1,28 @@
+"""MedSAM2 Slicer plugin for 2D interactive segmentation.
+
+This module implements a Slicer plugin for interactive 2D segmentation
+using the MedSAM2 model, allowing users to segment medical images
+using point and bounding box prompts.
+"""
+
 import io
 import gzip
-import requests
-import copy
 import threading
 import time
-
 import importlib.util
 
 import numpy as np
-from pathlib import Path
+import requests
 
-import slicer
 import qt
 import vtk
 from qt import QApplication, QPalette
-
-from vtkmodules.util.numpy_support import vtk_to_numpy
-
+import slicer
 from slicer.i18n import tr as _
 from slicer.i18n import translate
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 from PythonQt.QtGui import QMessageBox
-from slicer.parameterNodeWrapper import (
-    parameterNodeWrapper,
-    WithinRange,
-)
-
-from slicer import vtkMRMLScalarVolumeNode
 
 
 ###############################################################################
@@ -56,6 +51,7 @@ def ensure_synched(func):
             debug_print(
                 "Image changed (or not previously set). Calling upload_segment_to_server()"
             )
+
             result = self.upload_image_to_server()
 
             failed_to_sync = result is None
@@ -97,7 +93,9 @@ class MedSAM2(ScriptedLoadableModule):
 
             Read more about this plugin here: https://github.com/CodingHHW/SlicerMedSAM2.
             """
-        self.parent.acknowledgementText = """When using SlicerMedSAM2, please cite the relevant publications."""
+        self.parent.acknowledgementText = (
+            """When using SlicerMedSAM2, please cite the relevant publications."""
+        )
 
 
 ###############################################################################
@@ -135,12 +133,18 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.editor_widget.setMRMLScene(slicer.mrmlScene)
         # Use the same segmentation parameter node as the Segment Editor core module
         segment_editor_singleton_tag = "SegmentEditor"
-        self.segment_editor_node = slicer.mrmlScene.GetSingletonNode(segment_editor_singleton_tag, "vtkMRMLSegmentEditorNode")
+        self.segment_editor_node = slicer.mrmlScene.GetSingletonNode(
+            segment_editor_singleton_tag, "vtkMRMLSegmentEditorNode"
+        )
         if self.segment_editor_node is None:
-            self.segment_editor_node = slicer.mrmlScene.CreateNodeByClass("vtkMRMLSegmentEditorNode")
+            self.segment_editor_node = slicer.mrmlScene.CreateNodeByClass(
+                "vtkMRMLSegmentEditorNode"
+            )
             self.segment_editor_node.UnRegister(None)
             self.segment_editor_node.SetSingletonTag(segment_editor_singleton_tag)
-            self.segment_editor_node = slicer.mrmlScene.AddNode(self.segment_editor_node)
+            self.segment_editor_node = slicer.mrmlScene.AddNode(
+                self.segment_editor_node
+            )
         self.ui.editor_widget.setMRMLSegmentEditorNode(self.segment_editor_node)
         self.ui.editor_widget.setSegmentationNode(self.get_segmentation_node())
 
@@ -188,8 +192,10 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.uploadProgressGroup.setVisible(False)
 
         # Load the saved server URL (default to http://172.25.52.123:8002/ if not set)
-        savedServer = slicer.util.settingsValue("MedSAM2/server", "http://172.25.52.123:8002")
-        self.ui.Server.text = savedServer
+        savedServer = slicer.util.settingsValue(
+            "MedSAM2/server", "http://172.25.52.123:8002"
+        )
+        self.ui.Server.setText(savedServer)
         self.server = savedServer.rstrip("/")
 
         self.ui.Server.editingFinished.connect(self.update_server)
@@ -212,8 +218,11 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.on_prompt_type_negative_clicked
         )
 
-        self.addObserver(slicer.app.applicationLogic().GetInteractionNode(), 
-            slicer.vtkMRMLInteractionNode.InteractionModeChangedEvent, self.on_interaction_node_modified)
+        self.addObserver(
+            slicer.app.applicationLogic().GetInteractionNode(),
+            slicer.vtkMRMLInteractionNode.InteractionModeChangedEvent,
+            self.on_interaction_node_modified,
+        )
 
     def setup_shortcuts(self):
         """
@@ -280,6 +289,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         if module_version is not None:
             import importlib.metadata as metadata
+
             try:
                 version = metadata.version(module_name)
                 if version != module_version:
@@ -382,11 +392,16 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 )
 
             prompt_type["node"] = node
-            prompt_type["button"].clicked.connect(lambda checked, prompt_name=prompt_name: self.on_place_button_clicked(checked, prompt_name)) 
+            prompt_type["button"].clicked.connect(
+                lambda checked, prompt_name=prompt_name: self.on_place_button_clicked(
+                    checked, prompt_name
+                )
+            )
             self.all_prompt_buttons[prompt_name] = prompt_type["button"]
 
             light_dark_mode = self.is_ui_dark_or_light_mode()
-            # Note: Icons are not included in this implementation, but the code structure is preserved
+            # Note: Icons are not included in this implementation,
+            # but the code structure is preserved
 
         # To make sure that when segment is reset, no interaction is selected (without this code
         # the last interaction tool gets selected)
@@ -437,10 +452,18 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         interactionNode = slicer.app.applicationLogic().GetInteractionNode()
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
         for prompt_type in self.prompt_types.values():
-            if interactionNode.GetCurrentInteractionMode() != slicer.vtkMRMLInteractionNode.Place:
+            if (
+                interactionNode.GetCurrentInteractionMode()
+                != slicer.vtkMRMLInteractionNode.Place
+            ):
                 prompt_type["button"].setChecked(False)
-            elif interactionNode.GetCurrentInteractionMode() == slicer.vtkMRMLInteractionNode.Place:
-                placingThisNode = (selectionNode.GetActivePlaceNodeID() == prompt_type["node"].GetID())
+            elif (
+                interactionNode.GetCurrentInteractionMode()
+                == slicer.vtkMRMLInteractionNode.Place
+            ):
+                placingThisNode = (
+                    selectionNode.GetActivePlaceNodeID() == prompt_type["node"].GetID()
+                )
                 prompt_type["button"].setChecked(placingThisNode)
 
     def remove_all_but_last_prompt(self):
@@ -479,8 +502,12 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         interactionNode = slicer.app.applicationLogic().GetInteractionNode()
         if checked:
             selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-            selectionNode.SetReferenceActivePlaceNodeClassName(self.prompt_types[prompt_name]["node_class"])
-            selectionNode.SetActivePlaceNodeID(self.prompt_types[prompt_name]["node"].GetID())
+            selectionNode.SetReferenceActivePlaceNodeClassName(
+                self.prompt_types[prompt_name]["node_class"]
+            )
+            selectionNode.SetActivePlaceNodeID(
+                self.prompt_types[prompt_name]["node"].GetID()
+            )
             interactionNode.SetPlaceModePersistence(1)
             interactionNode.SetCurrentInteractionMode(interactionNode.Place)
         else:
@@ -526,6 +553,8 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         and sends it to the server.
         """
         xyz = self.xyz_from_caller(caller)
+        if not xyz:
+            return
 
         volume_node = self.get_volume_node()
         if volume_node:
@@ -541,6 +570,8 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         seg_response = self.request_to_server(
             url, json={"voxel_coord": xyz[::-1], "positive_click": positive_click}
         )
+        if seg_response is None:
+            return
 
         unpacked_segmentation = self.unpack_binary_segmentation(
             seg_response.content, decompress=False
@@ -560,6 +591,8 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         Once two corners are placed, we send the bounding box to the server.
         """
         xyz = self.xyz_from_caller(caller)
+        if not xyz:
+            return
 
         if self.prev_caller is not None and caller.GetID() == self.prev_caller.GetID():
             roi_node = slicer.mrmlScene.GetNodeByID(caller.GetID())
@@ -612,6 +645,8 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 "positive_click": positive_click,
             },
         )
+        if seg_response is None:
+            return
 
         unpacked_segmentation = self.unpack_binary_segmentation(
             seg_response.content, decompress=False
@@ -630,7 +665,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # After creating a new segment, negative prompts do not make sense, so
         # we're automatically switching the prompt type to positive.
         self.ui.pbPromptTypePositive.click()
-        
+
         debug_print("doing make_new_segment")
         segmentation_node = self.get_segmentation_node()
 
@@ -668,7 +703,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # After clearing a segment, negative prompts do not make sense, so
         # we're automatically switching the prompt type to positive.
         self.ui.pbPromptTypePositive.click()
-        
+
         _, selected_segment_id = self.get_selected_segmentation_node_and_segment_id()
 
         if selected_segment_id:
@@ -687,7 +722,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         Handles both 2D slice segmentation and 3D volume segmentation.
         """
         t0 = time.time()
-        
+
         # Get segmentation node and segment ID
         segmentationNode, selectedSegmentID = (
             self.get_selected_segmentation_node_and_segment_id()
@@ -696,46 +731,46 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if not volumeNode:
             debug_print("No volume node found")
             return
-        
+
         # Check if segmentation_mask is 2D (from server) or 3D (from other sources)
         if segmentation_mask.ndim == 2:
             # Handle 2D segmentation result (from server)
-            
+
             # Get current slice index
             sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
             if not sliceWidget:
                 debug_print("No active slice widget found")
                 return
-            
+
             sliceLogic = sliceWidget.sliceLogic()
             sliceNode = sliceLogic.GetSliceNode()
-            
+
             # Get slice offset
             sliceOffset = sliceNode.GetSliceOffset()
-            
+
             # Get volume image data
             imageData = volumeNode.GetImageData()
             if not imageData:
                 debug_print("No image data found in volume node")
                 return
-            
+
             # Calculate slice index from offset
             spacing = imageData.GetSpacing()
             origin = imageData.GetOrigin()
             sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
-            
+
             # Get current 3D segmentation data
             currentSegmentation = slicer.util.arrayFromSegmentBinaryLabelmap(
                 segmentationNode, selectedSegmentID, volumeNode
             )
-            
+
             # Update the specific slice with the 2D segmentation result
             if sliceIndex >= 0 and sliceIndex < currentSegmentation.shape[0]:
                 currentSegmentation[sliceIndex, :, :] = segmentation_mask
-                
+
                 # Save updated segmentation to previous_states
                 self.previous_states["segment_data"] = currentSegmentation
-                
+
                 # Update the segment with the full 3D segmentation data
                 with slicer.util.RenderBlocker():  # avoid flashing of 3D view
                     self.ui.editor_widget.saveStateForUndo()
@@ -748,7 +783,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         else:
             # Handle 3D segmentation result (original behavior)
             self.previous_states["segment_data"] = segmentation_mask
-            
+
             with slicer.util.RenderBlocker():
                 self.ui.editor_widget.saveStateForUndo()
                 slicer.util.updateSegmentBinaryLabelmapFromArray(
@@ -757,25 +792,33 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     selectedSegmentID,
                     volumeNode,
                 )
-        
+
         # Handle 3D representation if needed
-        was_3d_shown = segmentationNode.GetSegmentation().ContainsRepresentation(slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName())
+        was_3d_shown = segmentationNode.GetSegmentation().ContainsRepresentation(
+            slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName()
+        )
         if was_3d_shown:
             segmentationNode.CreateClosedSurfaceRepresentation()
 
         # Mark the segment as being edited
         segment = segmentationNode.GetSegmentation().GetSegment(selectedSegmentID)
-        if slicer.vtkSlicerSegmentationsModuleLogic.GetSegmentStatus(segment) == slicer.vtkSlicerSegmentationsModuleLogic.NotStarted:
-            slicer.vtkSlicerSegmentationsModuleLogic.SetSegmentStatus(segment, slicer.vtkSlicerSegmentationsModuleLogic.InProgress)
+        if (
+            slicer.vtkSlicerSegmentationsModuleLogic.GetSegmentStatus(segment)
+            == slicer.vtkSlicerSegmentationsModuleLogic.NotStarted
+        ):
+            slicer.vtkSlicerSegmentationsModuleLogic.SetSegmentStatus(
+                segment, slicer.vtkSlicerSegmentationsModuleLogic.InProgress
+            )
 
         # Mark the segmentation as modified so the UI updates
         segmentationNode.Modified()
 
         if segmentation_mask.sum() > 0:
-            # If we do this when segmentation_mask.sum() == 0, sometimes Slicer will throw "bogus" OOM errors
+            # If we do this when segmentation_mask.sum() == 0, sometimes Slicer
+            # will throw "bogus" OOM errors
             # (see https://github.com/coendevente/SlicerNNInteractive/issues/38)
             segmentationNode.GetSegmentation().CollapseBinaryLabelmaps()
-        
+
         del segmentation_mask
 
         debug_print(f"show_segmentation took {time.time() - t0}")
@@ -798,11 +841,15 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Create new segmentation node if none suitable found
         if not segmentation_node:
-            segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            segmentation_node = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLSegmentationNode"
+            )
 
         # Set segmentation node in widget
         self.ui.editor_widget.setSegmentationNode(segmentation_node)
-        segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(self.get_volume_node())
+        segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(
+            self.get_volume_node()
+        )
 
         return segmentation_node
 
@@ -897,34 +944,29 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         slicer.util.showStatusMessage("Testing MedSAM2 server connection...", 2000)
 
-        def test_connection():
-            try:
-                url = f"{server_url}/ping"
-                response = requests.get(url, timeout=5)
-                if response.status_code == 200:
-                    QMessageBox.information(
-                        slicer.util.mainWindow(),
-                        "Test Connection",
-                        "Server connection successful!",
-                    )
-                else:
-                    QMessageBox.warning(
-                        slicer.util.mainWindow(),
-                        "Test Connection",
-                        f"Server returned unexpected status code: {response.status_code}",
-                    )
-            except requests.exceptions.RequestException as e:
-                QMessageBox.critical(
+        try:
+            url = f"{server_url}/ping"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                QMessageBox.information(
                     slicer.util.mainWindow(),
                     "Test Connection",
-                    f"Failed to connect to server: {str(e)}",
+                    "Server connection successful!",
                 )
-            finally:
-                self._test_server_in_progress = False
-
-        import threading
-        test_thread = threading.Thread(target=test_connection)
-        test_thread.start()
+            else:
+                QMessageBox.warning(
+                    slicer.util.mainWindow(),
+                    "Test Connection",
+                    f"Server returned unexpected status code: {response.status_code}",
+                )
+        except requests.exceptions.RequestException as e:
+            QMessageBox.critical(
+                slicer.util.mainWindow(),
+                "Test Connection",
+                f"Failed to connect to server: {e}",
+            )
+        finally:
+            self._test_server_in_progress = False
 
     def request_to_server(self, url, json=None, data=None, headers=None):
         """
@@ -934,14 +976,21 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             headers = {}
 
         try:
-            response = requests.post(url, json=json, data=data, headers=headers, timeout=30)
+            response = requests.post(
+                url, json=json, data=data, headers=headers, timeout=30
+            )
             response.raise_for_status()
             return response
         except requests.exceptions.RequestException as e:
-            QMessageBox.critical(
-                slicer.util.mainWindow(),
-                "Server Error",
-                f"Failed to communicate with server: {str(e)}",
+            # Use QTimer.singleShot to execute in main thread
+            error_msg = str(e)
+            qt.QTimer.singleShot(
+                0,
+                lambda: QMessageBox.critical(
+                    slicer.util.mainWindow(),
+                    "Server Error",
+                    f"Failed to communicate with server: {error_msg}",
+                )
             )
             return None
 
@@ -950,7 +999,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         Uploads the current 2D slice image to the server with window/level applied.
         """
         url = f"{self.server}/upload_image"
-        
+
         # Get current slice image data with window/level applied
         image_data = self.get_current_slice_data_with_window_level()
         if image_data is None:
@@ -963,6 +1012,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Send to server
         from requests_toolbelt import MultipartEncoder
+
         fields = {
             "file": ("slice.npy.gz", compressed_data, "application/octet-stream"),
         }
@@ -977,7 +1027,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.previous_states["image_data"] = image_data
             debug_print("2D slice image uploaded successfully!")
         return response
-        
+
     def get_current_slice_data_with_window_level(self):
         """
         Gets the current slice image data with window/level applied.
@@ -988,93 +1038,95 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if not sliceWidget:
             debug_print("No active slice widget found")
             return None
-        
+
         sliceLogic = sliceWidget.sliceLogic()
         sliceNode = sliceLogic.GetSliceNode()
-        
+
         # Get current slice index
         volumeNode = self.get_volume_node()
         if not volumeNode:
             debug_print("No volume node found")
             return None
-        
+
         # Get slice offset
         sliceOffset = sliceNode.GetSliceOffset()
-        
+
         # Get volume image data
         imageData = volumeNode.GetImageData()
         if not imageData:
             debug_print("No image data found in volume node")
             return None
-        
+
         # Get volume dimensions and spacing
         extent = imageData.GetExtent()
         spacing = imageData.GetSpacing()
         origin = imageData.GetOrigin()
-        
+
         # Calculate slice index from offset
         sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
-        
+
         # Get 3D volume array
         volumeArray = slicer.util.arrayFromVolume(volumeNode)
-        
+
         # Extract 2D slice (assuming volumeArray is in format [Z, Y, X])
         if sliceIndex < 0 or sliceIndex >= volumeArray.shape[0]:
             debug_print(f"Invalid slice index: {sliceIndex}")
             return None
-        
+
         sliceArray = volumeArray[sliceIndex, :, :]
-        
+
         # Get current window/level settings
         windowWidth = sliceNode.GetWindowWidth()
         windowCenter = sliceNode.GetWindowCenter()
-        
+
         # Apply window/level to slice
-        sliceWithWindowLevel = self.apply_window_level(sliceArray, windowCenter, windowWidth)
-        
+        sliceWithWindowLevel = self.apply_window_level(
+            sliceArray, windowCenter, windowWidth
+        )
+
         # Convert to MedSAM2 expected format (0-255 range, 3-channel if needed)
         sliceWithWindowLevel = self.convert_to_medsam2_format(sliceWithWindowLevel)
-        
+
         return sliceWithWindowLevel
-        
+
     def apply_window_level(self, imageArray, windowCenter, windowWidth):
         """
         Applies window/level to the image array.
-        
+
         Args:
             imageArray: 2D numpy array of image data
             windowCenter: Window center value
             windowWidth: Window width value
-            
+
         Returns:
             2D numpy array with window/level applied
         """
         # Calculate window min and max
         windowMin = windowCenter - windowWidth / 2
         windowMax = windowCenter + windowWidth / 2
-        
+
         # Apply window/level
         result = np.clip(imageArray, windowMin, windowMax)
         result = (result - windowMin) / (windowMax - windowMin)  # Normalize to 0-1
-        
+
         return result
-        
+
     def convert_to_medsam2_format(self, imageArray):
         """
         Converts the image array to MedSAM2 expected format.
-        
+
         Args:
             imageArray: 2D numpy array with values in 0-1 range
-            
+
         Returns:
             2D numpy array in MedSAM2 format
         """
         # MedSAM2 expects 0-255 range, uint8
         imageArray = (imageArray * 255).astype(np.uint8)
-        
+
         # If MedSAM2 expects 3-channel input, uncomment the following line
         # imageArray = np.stack((imageArray, imageArray, imageArray), axis=-1)
-        
+
         return imageArray
 
     def upload_segment_to_server(self):
@@ -1082,7 +1134,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         Uploads the current 2D slice segmentation to the server.
         """
         url = f"{self.server}/upload_segment"
-        
+
         # Get current 2D slice segmentation data
         segment_data = self.get_current_slice_segment_data()
         if segment_data is None:
@@ -1095,6 +1147,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Send to server
         from requests_toolbelt import MultipartEncoder
+
         fields = {
             "file": ("segment.npy.gz", compressed_data, "application/octet-stream"),
         }
@@ -1109,7 +1162,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.previous_states["segment_data"] = segment_data
             debug_print("2D segment uploaded successfully!")
         return response
-        
+
     def get_current_slice_segment_data(self):
         """
         Gets the current slice segmentation data.
@@ -1120,47 +1173,49 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if not sliceWidget:
             debug_print("No active slice widget found")
             return None
-        
+
         sliceLogic = sliceWidget.sliceLogic()
         sliceNode = sliceLogic.GetSliceNode()
-        
+
         volumeNode = self.get_volume_node()
         if not volumeNode:
             debug_print("No volume node found")
             return None
-        
+
         # Get slice offset
         sliceOffset = sliceNode.GetSliceOffset()
-        
+
         # Get volume image data
         imageData = volumeNode.GetImageData()
         if not imageData:
             debug_print("No image data found in volume node")
             return None
-        
+
         # Calculate slice index from offset
         spacing = imageData.GetSpacing()
         origin = imageData.GetOrigin()
         sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
-        
+
         # Get segmentation data
-        segmentation_node, selected_segment_id = self.get_selected_segmentation_node_and_segment_id()
+        segmentation_node, selected_segment_id = (
+            self.get_selected_segmentation_node_and_segment_id()
+        )
         if not segmentation_node or not selected_segment_id:
             debug_print("No segmentation node or segment ID found")
             return None
-        
+
         # Get 3D segment data
         segment_3d = slicer.util.arrayFromSegmentBinaryLabelmap(
             segmentation_node, selected_segment_id, volumeNode
         )
-        
+
         # Extract 2D slice (assuming segment_3d is in format [Z, Y, X])
         if sliceIndex < 0 or sliceIndex >= segment_3d.shape[0]:
             debug_print(f"Invalid slice index: {sliceIndex}")
             return None
-        
+
         segment_2d = segment_3d[sliceIndex, :, :]
-        
+
         return segment_2d
 
     def unpack_binary_segmentation(self, content, decompress=True):
@@ -1200,6 +1255,28 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         return self.ui.editor_widget.sourceVolumeNode()
 
+    def ras_to_xyz(self, pos):
+        """
+        Converts an RAS position (mm) to IJK voxel coords in the current volume node.
+        Returns integer voxel indices as [i, j, k].
+        """
+        volumeNode = self.get_volume_node()
+        if not volumeNode:
+            return None
+
+        transformRasToVolumeRas = vtk.vtkGeneralTransform()
+        slicer.vtkMRMLTransformNode.GetTransformBetweenNodes(
+            None, volumeNode.GetParentTransformNode(), transformRasToVolumeRas
+        )
+        point_VolumeRas = transformRasToVolumeRas.TransformPoint(pos)
+
+        volumeRasToIjk = vtk.vtkMatrix4x4()
+        volumeNode.GetRASToIJKMatrix(volumeRasToIjk)
+        point_Ijk = [0, 0, 0, 1]
+        volumeRasToIjk.MultiplyPoint(list(point_VolumeRas) + [1.0], point_Ijk)
+        xyz = [int(round(c)) for c in point_Ijk[0:3]]
+        return xyz
+
     def xyz_from_caller(self, caller, point_type="control_point"):
         """
         Extracts xyz coordinates from the caller node.
@@ -1211,14 +1288,16 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 return []
             xyz = [0.0, 0.0, 0.0]
             caller.GetNthControlPointPosition(point_id, xyz)
-            return xyz
+            return self.ras_to_xyz(xyz)
         elif point_type == "curve_point":
             # Get all curve points
             xyzs = []
             for i in range(caller.GetNumberOfControlPoints()):
                 xyz = [0.0, 0.0, 0.0]
                 caller.GetNthControlPointPosition(i, xyz)
-                xyzs.append(xyz)
+                ijk = self.ras_to_xyz(xyz)
+                if ijk is not None:
+                    xyzs.append(ijk)
             return xyzs
 
     @property
@@ -1270,7 +1349,8 @@ class MedSAM2Logic(ScriptedLoadableModuleLogic):
     """
 
     def __init__(self) -> None:
-        """Called when the logic class is instantiated. Can be used for initializing member variables."""
+        """Called when the logic class is instantiated.
+        Can be used for initializing member variables."""
         ScriptedLoadableModuleLogic.__init__(self)
 
 
