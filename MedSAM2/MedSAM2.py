@@ -168,7 +168,13 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
 
         # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.ui.pbResetSegment.connect("clicked(bool)", self.onResetSegment)
+        self.ui.pbNextSegment.connect("clicked(bool)", self.onNextSegment)
+        self.ui.pbPromptTypePositive.connect("clicked(bool)", self.onPromptTypePositive)
+        self.ui.pbPromptTypeNegative.connect("clicked(bool)", self.onPromptTypeNegative)
+        self.ui.pbInteractionPoint.connect("clicked(bool)", self.onInteractionPoint)
+        self.ui.pbInteractionBBox.connect("clicked(bool)", self.onInteractionBBox)
+        self.ui.pbTestServer.connect("clicked(bool)", self.onTestServer)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -232,25 +238,54 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self._checkCanApply()
 
     def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
-            self.ui.applyButton.toolTip = _("Compute output volume")
-            self.ui.applyButton.enabled = True
-        else:
-            self.ui.applyButton.toolTip = _("Select input and output volume nodes")
-            self.ui.applyButton.enabled = False
+        """Check if the module is ready to run."""
+        # Implementation will be added later
+        pass
 
-    def onApplyButton(self) -> None:
-        """Run processing when user clicks "Apply" button."""
-        with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
+    def onResetSegment(self) -> None:
+        """Reset the current segment."""
+        logging.info("Reset segment clicked")
+        # Implementation will be added later
 
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
+    def onNextSegment(self) -> None:
+        """Move to the next segment."""
+        logging.info("Next segment clicked")
+        # Implementation will be added later
+
+    def onPromptTypePositive(self) -> None:
+        """Set prompt type to positive."""
+        logging.info("Positive prompt type clicked")
+        self.ui.pbPromptTypePositive.setChecked(True)
+        self.ui.pbPromptTypeNegative.setChecked(False)
+        # Implementation will be added later
+
+    def onPromptTypeNegative(self) -> None:
+        """Set prompt type to negative."""
+        logging.info("Negative prompt type clicked")
+        self.ui.pbPromptTypePositive.setChecked(False)
+        self.ui.pbPromptTypeNegative.setChecked(True)
+        # Implementation will be added later
+
+    def onInteractionPoint(self) -> None:
+        """Enable point interaction mode."""
+        logging.info("Point interaction clicked")
+        self.ui.pbInteractionPoint.setChecked(True)
+        self.ui.pbInteractionBBox.setChecked(False)
+        # Implementation will be added later
+
+    def onInteractionBBox(self) -> None:
+        """Enable bounding box interaction mode."""
+        logging.info("Bounding box interaction clicked")
+        self.ui.pbInteractionPoint.setChecked(False)
+        self.ui.pbInteractionBBox.setChecked(True)
+        # Implementation will be added later
+
+    def onTestServer(self) -> None:
+        """Test the server connection."""
+        logging.info("Test server connection clicked")
+        serverUrl = self.ui.Server.text
+        logging.info(f"Testing connection to server: {serverUrl}")
+        # Implementation will be added later
 
 
 #
