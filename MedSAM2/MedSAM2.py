@@ -553,8 +553,6 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         and sends it to the server.
         """
         xyz = self.xyz_from_caller(caller)
-        if not xyz:
-            return
 
         volume_node = self.get_volume_node()
         if volume_node:
@@ -1029,11 +1027,13 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         return response
 
     def get_current_slice_data_with_window_level(self):
+        """Gets the current slice image data with window/level applied.
+
+        Uses the slice view center RAS -> IJK to determine the Z slice index,
+        matching the user-visible slice behavior.
+
+        Returns a 2D numpy array in MedSAM2 expected format.
         """
-        Gets the current slice image data with window/level applied.
-        Returns a 2D numpy array.
-        """
-        # Get current active slice view
         sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
         if not sliceWidget:
             debug_print("No active slice widget found")
@@ -1042,92 +1042,73 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         sliceLogic = sliceWidget.sliceLogic()
         sliceNode = sliceLogic.GetSliceNode()
 
-        # Get current slice index
         volumeNode = self.get_volume_node()
         if not volumeNode:
             debug_print("No volume node found")
             return None
 
-        # Get slice offset
-        sliceOffset = sliceNode.GetSliceOffset()
-
-        # Get volume image data
-        imageData = volumeNode.GetImageData()
-        if not imageData:
-            debug_print("No image data found in volume node")
+        volumeArray = slicer.util.arrayFromVolume(volumeNode)
+        if volumeArray is None or volumeArray.size == 0:
+            debug_print("Empty volume array")
             return None
 
-        # Get volume dimensions and spacing
-        extent = imageData.GetExtent()
-        spacing = imageData.GetSpacing()
-        origin = imageData.GetOrigin()
+        # Compute Z index from slice view center (RAS -> IJK)
+        slice_to_ras = sliceNode.GetSliceToRAS()
+        center_ras = [
+            slice_to_ras.GetElement(0, 3),
+            slice_to_ras.GetElement(1, 3),
+            slice_to_ras.GetElement(2, 3),
+            1.0,
+        ]
+        ras_to_ijk = vtk.vtkMatrix4x4()
+        volumeNode.GetRASToIJKMatrix(ras_to_ijk)
+        center_ijk = [0.0, 0.0, 0.0, 0.0]
+        ras_to_ijk.MultiplyPoint(center_ras, center_ijk)
+        sliceIndex = int(round(center_ijk[2]))
 
-        # Calculate slice index from offset
-        sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
-
-        # Get 3D volume array
-        volumeArray = slicer.util.arrayFromVolume(volumeNode)
-
-        # Extract 2D slice (assuming volumeArray is in format [Z, Y, X])
         if sliceIndex < 0 or sliceIndex >= volumeArray.shape[0]:
-            debug_print(f"Invalid slice index: {sliceIndex}")
+            debug_print(f"Slice index out of bounds: {sliceIndex}")
             return None
 
         sliceArray = volumeArray[sliceIndex, :, :]
 
-        # Get current window/level settings
-        windowWidth = sliceNode.GetWindowWidth()
-        windowCenter = sliceNode.GetWindowCenter()
+        # Window/level from volume display node (same as user sees)
+        windowWidth = None
+        windowCenter = None
+        try:
+            displayNode = volumeNode.GetDisplayNode()
+            if displayNode is not None:
+                windowWidth = float(displayNode.GetWindow())
+                windowCenter = float(displayNode.GetLevel())
+        except Exception:
+            windowWidth = None
+            windowCenter = None
 
-        # Apply window/level to slice
+        if windowWidth is None or windowWidth <= 0 or windowCenter is None:
+            minV = float(np.min(sliceArray))
+            maxV = float(np.max(sliceArray))
+            windowWidth = max(maxV - minV, 1.0)
+            windowCenter = (maxV + minV) / 2.0
+
         sliceWithWindowLevel = self.apply_window_level(
             sliceArray, windowCenter, windowWidth
         )
-
-        # Convert to MedSAM2 expected format (0-255 range, 3-channel if needed)
-        sliceWithWindowLevel = self.convert_to_medsam2_format(sliceWithWindowLevel)
-
-        return sliceWithWindowLevel
+        return self.convert_to_medsam2_format(sliceWithWindowLevel)
 
     def apply_window_level(self, imageArray, windowCenter, windowWidth):
-        """
-        Applies window/level to the image array.
-
-        Args:
-            imageArray: 2D numpy array of image data
-            windowCenter: Window center value
-            windowWidth: Window width value
-
-        Returns:
-            2D numpy array with window/level applied
-        """
-        # Calculate window min and max
+        """Applies window/level to the image array."""
         windowMin = windowCenter - windowWidth / 2
         windowMax = windowCenter + windowWidth / 2
 
-        # Apply window/level
         result = np.clip(imageArray, windowMin, windowMax)
-        result = (result - windowMin) / (windowMax - windowMin)  # Normalize to 0-1
+        result = (result - windowMin) / (windowMax - windowMin)
 
         return result
 
     def convert_to_medsam2_format(self, imageArray):
-        """
-        Converts the image array to MedSAM2 expected format.
+        """Converts the image array to MedSAM2 expected format (uint8 0-255)."""
+        return (imageArray * 255).astype(np.uint8)
 
-        Args:
-            imageArray: 2D numpy array with values in 0-1 range
-
-        Returns:
-            2D numpy array in MedSAM2 format
-        """
-        # MedSAM2 expects 0-255 range, uint8
-        imageArray = (imageArray * 255).astype(np.uint8)
-
-        # If MedSAM2 expects 3-channel input, uncomment the following line
-        # imageArray = np.stack((imageArray, imageArray, imageArray), axis=-1)
-
-        return imageArray
 
     def upload_segment_to_server(self):
         """
@@ -1232,6 +1213,9 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         Checks if the current image has changed from our `self.previous_states`.
         """
         image_data = self.get_image_data()
+        if image_data is None:
+            debug_print("No volume node found")
+            return False
         old_image_data = self.previous_states.get("image_data", None)
         image_changed = old_image_data is None or not np.array_equal(
             old_image_data, image_data
@@ -1253,7 +1237,15 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         Gets the current volume node from the segment editor.
         """
-        return self.ui.editor_widget.sourceVolumeNode()
+        volumeNode = self.ui.editor_widget.sourceVolumeNode()
+
+        if not volumeNode:
+            volumeNodes = slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")
+            if volumeNodes:
+                volumeNode = volumeNodes[-1]
+                self.ui.editor_widget.setSourceVolumeNode(volumeNode)
+
+        return volumeNode
 
     def ras_to_xyz(self, pos):
         """
