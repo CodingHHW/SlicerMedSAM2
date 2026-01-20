@@ -56,16 +56,16 @@ def ensure_synched(func):
 
             failed_to_sync = result is None
 
-        if not failed_to_sync and self.selected_segment_changed():
-            debug_print(
-                "Segment changed (or not previously set). Calling upload_segment_to_server()"
-            )
-            self.remove_all_but_last_prompt()
-            result = self.upload_segment_to_server()
-
-            failed_to_sync = result is None
-        else:
-            debug_print("Segment did not change!")
+        # if not failed_to_sync and self.selected_segment_changed():
+        #     debug_print(
+        #         "Segment changed (or not previously set). Calling upload_segment_to_server()"
+        #     )
+        #     self.remove_all_but_last_prompt()
+        #     result = self.upload_segment_to_server()
+        #
+        #     failed_to_sync = result is None
+        # else:
+        #     debug_print("Segment did not change!")
 
         if not failed_to_sync:
             return func(self, *args, **kwargs)
@@ -731,10 +731,8 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             return
 
         # Check if segmentation_mask is 2D (from server) or 3D (from other sources)
-        if segmentation_mask.ndim == 2:
+        if segmentation_mask.shape[0] == 1:
             # Handle 2D segmentation result (from server)
-
-            # Get current slice index
             sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
             if not sliceWidget:
                 debug_print("No active slice widget found")
@@ -743,19 +741,19 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             sliceLogic = sliceWidget.sliceLogic()
             sliceNode = sliceLogic.GetSliceNode()
 
-            # Get slice offset
-            sliceOffset = sliceNode.GetSliceOffset()
-
-            # Get volume image data
-            imageData = volumeNode.GetImageData()
-            if not imageData:
-                debug_print("No image data found in volume node")
-                return
-
-            # Calculate slice index from offset
-            spacing = imageData.GetSpacing()
-            origin = imageData.GetOrigin()
-            sliceIndex = int(round((sliceOffset - origin[2]) / spacing[2]))
+            # Compute Z index from slice view center (RAS -> IJK)
+            slice_to_ras = sliceNode.GetSliceToRAS()
+            center_ras = [
+                slice_to_ras.GetElement(0, 3),
+                slice_to_ras.GetElement(1, 3),
+                slice_to_ras.GetElement(2, 3),
+                1.0,
+            ]
+            ras_to_ijk = vtk.vtkMatrix4x4()
+            volumeNode.GetRASToIJKMatrix(ras_to_ijk)
+            center_ijk = [0.0, 0.0, 0.0, 0.0]
+            ras_to_ijk.MultiplyPoint(center_ras, center_ijk)
+            sliceIndex = int(round(center_ijk[2]))
 
             # Get current 3D segmentation data
             currentSegmentation = slicer.util.arrayFromSegmentBinaryLabelmap(
@@ -763,7 +761,7 @@ class MedSAM2Widget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             )
 
             # Update the specific slice with the 2D segmentation result
-            if sliceIndex >= 0 and sliceIndex < currentSegmentation.shape[0]:
+            if 0 <= sliceIndex < currentSegmentation.shape[0]:
                 currentSegmentation[sliceIndex, :, :] = segmentation_mask
 
                 # Save updated segmentation to previous_states
